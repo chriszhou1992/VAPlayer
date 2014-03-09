@@ -18,42 +18,32 @@
 #include "ap.h"
 
 typedef struct _Components {
-	/* GtkWidget is the storage type for widgets */
-    GtkWidget *window;
 
-	GtkWidget *mainBox;
-	GtkWidget *optionsBox;
- 	GtkWidget *recordButton;
-	GtkWidget *audioButton;
-	GtkWidget *recordOptions;
-	GtkWidget *audioOptions;
-	/* The drawing area where the recording will be shown */
-	GtkWidget *recordWindow;
-	GtkWidget *playerWindow;
-	/* The drawing area where the playing will be shown */
-	GtkWidget *playWindow;
-	GtkWidget *fileButton, *playButton, *pauseButton, *rewindButton, *fastforwardButton;
+    GtkWidget *window;
+	GtkWidget *actionsBox;
+
+	GtkWidget *vrButton;
+	GtkWidget *vrOptions;
+	GtkWidget *recorder;
+	GtkWidget *vrWindow;
 
 	GtkWidget *vpButton;
+	GtkWidget *player;
+	GtkWidget *vpWindow;
+
+	GtkWidget *arButton;
+	GtkWidget *arOptions;
+	
 	GtkWidget *apButton;
 
+	vrData vrD;
+	vpData vpD;
+	arData arD;
+	apData apD;
 } Components;
 
-static gboolean delete_event(GtkWidget *widget, GdkEvent *event);
-static void destroy(GtkWidget *widget);
-static void record_video(GtkWidget *widget);
-static void record_audio(GtkWidget *widget);
-static void realize(GtkWidget *widget);
-static void destroy_audio_options();
 
 void init_GUI(int argc, char *argv[]);
-void setup_main_window();
-void setup_record_button();
-void setup_audio_button();
-void setup_record_audio_options();
-void setup_record_radio_buttons();
-void setup_record_window();
-void setup_player_window();
-void setup_vp_button();
-void setup_ap_button();
+
+
 #endif

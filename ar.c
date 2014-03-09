@@ -1,7 +1,165 @@
 #include "ar.h"
 
+int init_ar(int argc, char *argv[], arData *data) {
+	GstBus *bus;
+	GstStateChangeReturn ret;
+	GstCaps *recordCaps;
+
+	gchar filename[30];
+
+	/* Specifications */
+	gint samplingRate = atoi(argv[0]);
+	gint samplingSize = atoi(argv[1]);
+	gint numChannels = atoi(argv[2]);
+	gchar *format = argv[3];
+	gchar *device = "hw:1";
+	bool raw = (strcmp(format, "none") == 0);
+
+	/* Initialize GStreamer */
+	gst_init(0, NULL);
+
+	
+	/* Create the elements */
+	data->recordSrc = gst_element_factory_make("alsasrc", "recordSrc");
+	data->recordSampler = gst_element_factory_make("audioresample", "recordSampler");
+	data->recordFilter1 = gst_element_factory_make("capsfilter", "recordFilter1");
+	data->recordConverter = gst_element_factory_make("audioconvert", "recordConverter");
+	data->recordFilter2 = gst_element_factory_make("capsfilter", "recordFilter2");
+	if (!raw) {
+		data->recordEncoder = gst_element_factory_make(format, "recordEncoder");
+		data->recordMuxer = gst_element_factory_make("avimux", "recordMuxer");
+	}
+	data->fileSink = gst_element_factory_make("filesink", "fileSink");
+
+	/* Create the empty pipeline */
+	data->pipeline = gst_pipeline_new("recordPipeline");
+	
+	if (!raw) {
+		if (!data->pipeline || !data->recordSrc || !data->recordSampler || !data->recordFilter1 || 
+			!data->recordConverter || !data->recordFilter2 || 
+			!data->recordEncoder || !data->recordMuxer || !data->fileSink) {
+			g_printerr("Not all elements could be created.\n");
+			return -1;
+		}
+	} else {
+		format = "raw";
+		if (!data->pipeline || !data->recordSrc || !data->recordSampler || !data->recordFilter1 || 
+			!data->recordConverter || !data->recordFilter2 || !data->fileSink) {
+			g_printerr("Not all elements could be created.\n");
+			return -1;
+		}
+	}
+
+	printf("%s\n", format);
+
+	/* Specify what kind of audio is wanted from the microphone */
+	recordCaps = gst_caps_new_simple ("audio/x-raw-int",
+									  "rate", G_TYPE_INT, samplingRate,
+									  NULL);
+	g_object_set(data->recordFilter1, "caps", recordCaps, NULL);
+	gst_caps_unref(recordCaps);
+	recordCaps = gst_caps_new_simple ("audio/x-raw-int",
+									  "channels", G_TYPE_INT, numChannels,
+									  "width", G_TYPE_INT, samplingSize,
+									  "depth", G_TYPE_INT, samplingSize,
+									  "signed", G_TYPE_BOOLEAN, TRUE,
+									  NULL);
+	g_object_set(data->recordFilter2, "caps", recordCaps, NULL);
+	gst_caps_unref(recordCaps);
+
+	/* Generate a name for the file to be stored */
+	get_file_name(format, filename);
+
+	/* Set properties */
+	g_object_set(data->recordSrc, "device", device, NULL);
+	g_object_set(data->fileSink, "location", filename, NULL);
+
+	/* Build the pipeline */
+	if (!raw) {
+		gst_bin_add_many(GST_BIN(data->pipeline), 
+						 data->recordSrc, data->recordSampler, data->recordFilter1, 
+						 data->recordConverter, data->recordFilter2,
+						 data->recordEncoder, data->recordMuxer, data->fileSink, NULL);
+
+		if (!gst_element_link_many(data->recordSrc, data->recordSampler, data->recordFilter1, 
+								   data->recordConverter, data->recordFilter2, 
+								   data->recordEncoder, data->recordMuxer, data->fileSink, NULL)) {
+			g_printerr("Elements could not be linked.\n");
+			gst_object_unref(data->pipeline);
+			return -1;
+		}
+	} else {
+		gst_bin_add_many(GST_BIN(data->pipeline), 
+						 data->recordSrc, data->recordSampler, data->recordFilter1, 
+						 data->recordConverter, data->recordFilter2, data->fileSink, NULL);
+
+		if (!gst_element_link_many(data->recordSrc, data->recordSampler, data->recordFilter1, 
+								   data->recordConverter, data->recordFilter2, data->fileSink, NULL)) {
+			g_printerr("Elements could not be linked.\n");
+			gst_object_unref(data->pipeline);
+			return -1;
+		}
+	
+
+	}
+
+	/* Instruct the bus to emit signals for each received message, and connect to the interesting signals */
+	bus = gst_element_get_bus(data->pipeline);
+	gst_bus_add_signal_watch(bus);
+	g_signal_connect (G_OBJECT(bus), "message::error", (GCallback)ar_error, data);
+	g_signal_connect (G_OBJECT(bus), "message::eos", (GCallback)ar_eos, data);
+	gst_object_unref(bus);
+
+	/* Start playing */
+	ret = gst_element_set_state (data->pipeline, GST_STATE_PLAYING);
+	if (ret == GST_STATE_CHANGE_FAILURE) {
+		g_printerr ("Unable to set the pipeline to the playing state.\n");
+		gst_element_set_state (data->pipeline, GST_STATE_NULL);
+		gst_object_unref (data->pipeline);
+		return -1;
+	}
+
+	print_and_free(argv, filename);
+	
+	return 0;
+}
+
+void cleanup_ar(arData *data) {
+	gst_element_set_state(data->pipeline, GST_STATE_NULL);
+	gst_object_unref(data->pipeline);
+}
+
+void get_file_name(gchar *format, gchar *filename) {
+	filename[0] = '\0';
+	strcat(filename, "Audio/");
+	gchar filenum[20];	
+	sprintf(filenum, "%d", rand());
+	strcat(filename, filenum);
+	if (strcmp(format, "mulawenc") == 0) {
+		strcat(filename, ".mulaw");
+	} else if (strcmp(format, "alawenc") == 0){
+		strcat(filename, ".alaw");
+	} else {
+		strcat(filename, ".raw");
+	}
+}
+
+void print_and_free(char *argv[], char *filename) {
+	int i;
+	
+	g_print("Encoded with %s\n", argv[3]);
+	g_print("Sample Rate: %s\n", argv[0]);
+	g_print("Sample Size: %s\n", argv[1]);
+	g_print("Channels: %s\n", argv[2]);
+	g_print("File: %s\n", filename);
+
+	/*for (i = 0; i < 4; i++) {
+		free(argv[i]);
+	}*/
+}
+
 /* This function is called when an error message is posted on the bus */
-static void a_error(GstBus *bus, GstMessage *msg, aData *data) {
+static void ar_error(GstBus *bus, GstMessage *msg, arData *data) {
 	GError *err;
 	gchar *debug_info;
 
@@ -18,153 +176,8 @@ static void a_error(GstBus *bus, GstMessage *msg, aData *data) {
  
 /* This function is called when an End-Of-Stream message is posted on the bus.
  * We just set the pipeline to READY (which stops playback) */
-static void a_eos(GstBus *bus, GstMessage *msg, aData *data) {
+static void ar_eos(GstBus *bus, GstMessage *msg, arData *data) {
 	g_print ("End-Of-Stream reached.\n");
 	gst_element_set_state (data->pipeline, GST_STATE_READY);
 }
 
-int init_ar(int argc, char *argv[], aData *data) {
-	GstBus *bus;
-	GstStateChangeReturn ret;
-	GstCaps *recordCaps;
-
-	gint samplingRate;
-	gint samplingSize;
-	gint numChannels;
-	char *format;
-
-	/* Initialize GStreamer */
-	gst_init (&argc, &argv);
-	
-	samplingRate = atoi(argv[0]);
-	samplingSize = atoi(argv[1]);
-	numChannels = atoi(argv[2]);
-	format = argv[3];
-
-	int i;
-	for (i = 0; i < 3; i++) {
-		g_print("%s\n", argv[i]);
-		free(argv[i]);
-	}
-	
-
-	/* Create the elements */
-	data->recordSrc = gst_element_factory_make("alsasrc", "recordSrc");
-	data->recordSampler = gst_element_factory_make("audioresample", "recordSampler");
-	data->recordFilter1 = gst_element_factory_make("capsfilter", "recordFilter1");
-	data->recordConverter = gst_element_factory_make("audioconvert", "recordConverter");
-	data->recordFilter2 = gst_element_factory_make("capsfilter", "recordFilter2");
-	data->recordEncoder = gst_element_factory_make("mulawenc", "recordEncoder");
-	data->fileSink = gst_element_factory_make("filesink", "fileSink");
-	data->recordSink = gst_element_factory_make("alsasink", "recordSink");
-
-	data->tee = gst_element_factory_make("tee", "tee");
-	data->playQueue = gst_element_factory_make("queue", "playQueue");
-	data->saveQueue = gst_element_factory_make("queue", "saveQueue");
-
-	g_print("Encoded with %s\n", format);
-
-	/* Create the empty pipeline */
-	data->pipeline = gst_pipeline_new("recordPipeline");
-
-	if (!data->pipeline || !data->recordSrc || !data->recordSampler || !data->recordFilter1 || 
-		!data->recordConverter || !data->recordFilter2 || !data->recordEncoder || !data->fileSink ||
-		!data->tee || !data->playQueue || !data->saveQueue || !data->recordSink) {
-		g_printerr("Not all elements could be created.\n");
-		return -1;
-	}
-
-	/* Specify what kind of audio is wanted from the microphone */
-	recordCaps = gst_caps_new_simple ("audio/x-raw-int",
-									  "rate", G_TYPE_INT, samplingRate,
-									  NULL);
-	g_object_set(data->recordFilter1, "caps", recordCaps, NULL);
-	gst_caps_unref(recordCaps);
-	recordCaps = gst_caps_new_simple ("audio/x-raw-int",
-									  "channels", G_TYPE_INT, numChannels,
-									  "width", G_TYPE_INT, samplingSize,
-									  "depth", G_TYPE_INT, samplingSize,
-									  "signed", G_TYPE_BOOLEAN, TRUE,
-									  NULL);
-	g_object_set(data->recordFilter2, "caps", recordCaps, NULL);
-	gst_caps_unref(recordCaps);
-	
-	char filename[30];
-	filename[0] = '\0';
-	strcat(filename, "Audio/");
-	char filenum[20];	
-	sprintf(filenum, "%d", rand());
-	strcat(filename, filenum);
-	if (strcmp(format, "mulawenc") == 0) {
-		strcat(filename, ".mulaw");
-	} else {
-		strcat(filename, ".alaw");
-	}
-	free(format);
-	g_print("%s\n", filename);
-	/* Set properties */
-	g_object_set(data->recordSrc, "device", "hw:1", NULL);
-	g_object_set(data->fileSink, "location", filename, NULL);
-
-	/* Build the pipeline */
-	gst_bin_add_many(GST_BIN(data->pipeline), 
-					 data->recordSrc, data->recordSampler, data->recordFilter1, 
-					 data->recordConverter, data->recordFilter2,
-					 data->recordEncoder, data->fileSink, data->recordSink,
-					 data->tee, data->playQueue, data->saveQueue, NULL);
-
-	if (!gst_element_link_many(data->recordSrc, data->recordSampler, data->recordFilter1, 
-							   data->recordConverter, data->recordFilter2, data->tee, NULL) ||
-		!gst_element_link_many(data->playQueue, data->recordSink, NULL) ||
-		!gst_element_link_many(data->saveQueue, data->recordEncoder, data->fileSink, NULL)) {
-		g_printerr("Elements could not be linked.\n");
-		gst_object_unref(data->pipeline);
-    	return -1;
-	}
-
-	/* Manually link the Tee, which has "Request" pads */
-	data->teeSrcPadTemplate = gst_element_class_get_pad_template(GST_ELEMENT_GET_CLASS(data->tee), "src%d");
-	data->teeSavePad = gst_element_request_pad(data->tee, data->teeSrcPadTemplate, NULL, NULL);
-	g_print ("Obtained request pad %s for save branch.\n", gst_pad_get_name(data->teeSavePad));
-	data->saveQueuePad = gst_element_get_static_pad(data->saveQueue, "sink");
-	data->teePlayPad = gst_element_request_pad(data->tee, data->teeSrcPadTemplate, NULL, NULL);
-	g_print ("Obtained request pad %s for play branch.\n", gst_pad_get_name(data->teePlayPad));
-	data->playQueuePad = gst_element_get_static_pad(data->playQueue, "sink");
-	if (gst_pad_link(data->teeSavePad, data->saveQueuePad) != GST_PAD_LINK_OK ||
-		gst_pad_link(data->teePlayPad, data->playQueuePad) != GST_PAD_LINK_OK) {
-  		g_printerr ("Tee could not be linked.\n");
-		gst_object_unref(data->pipeline);
-		return -1;
-	}
-	gst_object_unref(data->saveQueuePad);
-	gst_object_unref(data->playQueuePad);
-
-	/* Instruct the bus to emit signals for each received message, and connect to the interesting signals */
-	bus = gst_element_get_bus(data->pipeline);
-	gst_bus_add_signal_watch(bus);
-	g_signal_connect (G_OBJECT(bus), "message::error", (GCallback)a_error, data);
-	g_signal_connect (G_OBJECT(bus), "message::eos", (GCallback)a_eos, data);
-	gst_object_unref(bus);
-
-	/* Start playing */
-	ret = gst_element_set_state (data->pipeline, GST_STATE_PLAYING);
-	if (ret == GST_STATE_CHANGE_FAILURE) {
-		g_printerr ("Unable to set the pipeline to the playing state.\n");
-		gst_element_set_state (data->pipeline, GST_STATE_NULL);
-		gst_object_unref (data->pipeline);
-		return -1;
-	}
-	
-	return 0;
-}
-
-void cleanup_ar(aData *data) {
-	/* Release the request pads from the Tee, and unref them */
-	//gst_element_release_request_pad(data->tee, data->teeSavePad);
-	//gst_element_release_request_pad(data->tee, data->teePlayPad);
-	//gst_object_unref(data->teeSavePad);
-	//gst_object_unref(data->teePlayPad);
-	/* Free resources */
-	gst_element_set_state(data->pipeline, GST_STATE_NULL);
-	gst_object_unref(data->pipeline);
-}

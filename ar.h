@@ -2,26 +2,22 @@
 #define ar_H_
 
 #include <gst/gst.h>
-
 #include <string.h>
+#include <stdbool.h>
 
-typedef struct _aData {
+typedef struct _arData {
 	GstElement *pipeline;
-	GstElement *recordSrc, *recordSampler, *recordFilter1, *recordConverter, *recordFilter2, *recordSink;
-	GstElement *recordEncoder, *fileSink;
+	GstElement *recordSrc, *recordSampler, *recordFilter1, *recordConverter, *recordFilter2;
+	GstElement *recordEncoder, *recordMuxer, *fileSink;
+} arData;
 
-	GstElement *tee, *playQueue, *saveQueue;
-	GstPadTemplate *teeSrcPadTemplate;
-  	GstPad *teeSavePad, *teePlayPad;
-  	GstPad *saveQueuePad, *playQueuePad;
+int init_ar(int argc, char *argv[], arData *data);
+void cleanup_ar(arData *data);
 
-	gulong recordWindowXID;
-} aData;
+void get_file_name(gchar *format, gchar *filename);
+void print_and_free(char *argv[], char *filename);
 
-static void a_error(GstBus *bus, GstMessage *msg, aData *data);
-static void a_eos(GstBus *bus, GstMessage *msg, aData *data);
-
-int init_ar(int argc, char *argv[], aData *data);
-void cleanup_ar(aData *data);
+static void ar_error(GstBus *bus, GstMessage *msg, arData *data);
+static void ar_eos(GstBus *bus, GstMessage *msg, arData *data);
 
 #endif

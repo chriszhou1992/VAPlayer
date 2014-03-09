@@ -1,9 +1,5 @@
-#include "vr.h"
-#include "ar.h"
-#include "GUI.h"
-
+#include "gui.h"
 
 int main(int argc, char *argv[]) {
-	
-	init_GUI(argc, argv);
+	init_gui(0, NULL);
 }
